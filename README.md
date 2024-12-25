@@ -1,6 +1,6 @@
 # Python App on EKS
 
-This project demonstrates deploying a simple Python application on Amazon Elastic Kubernetes Service (EKS). The application is built using Flask and Prometheus, and is containerized using Docker. The Kubernetes deployment includes a service to expose the application.
+This project demonstrates deploying a simple Python application on Amazon Elastic Kubernetes Service (EKS). The application is built using Flask, and is containerized using Docker. The Kubernetes deployment includes a service to expose the application.
 
 ## Features
 - A Flask-based Python app with Prometheus metrics.
