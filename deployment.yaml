@@ -19,10 +19,3 @@ spec:
         image: ibraheemcisse/flask-rps-app:latest
         ports:
         - containerPort: 5000
-        resources:
-          requests:
-            cpu: "200m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
