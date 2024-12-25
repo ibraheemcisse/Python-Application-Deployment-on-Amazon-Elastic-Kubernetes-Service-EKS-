@@ -78,7 +78,6 @@ Access the app:
 ### Flask Application (`app.py`)
 - **Endpoints**:
   - `/`: Returns `Hello, World!`
-  - `/metrics`: Exposes Prometheus metrics.
 
 ### Dockerfile
 - Uses `python:3.9-slim` for a lightweight container.
