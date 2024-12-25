@@ -28,77 +28,128 @@ This project demonstrates deploying a simple Python application on Amazon Elasti
 
 ---
 
-## Steps to Deploy
+## AWS EKS Setup
 
-### 1. Clone the Repository
+### 1. Create an EKS Cluster
+
+Use `eksctl` to create an EKS cluster with the necessary node groups.
+
 ```bash
-# Clone the repository
-$ git clone <repository-url>
-$ cd <repository-folder>
+# Create EKS cluster
+eksctl create cluster \
+  --name flask-rps-cluster \
+  --version 1.26 \
+  --region <your-region> \
+  --nodegroup-name flask-rps-nodes \
+  --node-type t3.medium \
+  --nodes 2 \
+  --nodes-min 1 \
+  --nodes-max 3 \
+  --managed
 ```
 
-### 2. Build and Push Docker Image
-Update the Docker Hub username in the `image` field of `deployment.yaml` if necessary.
-```bash
-# Build Docker image
-$ docker build -t <docker-hub-username>/flask-rps-app:latest .
+#### Explanation:
+- **`--name`**: Specifies the name of the cluster.
+- **`--version`**: Kubernetes version for the cluster.
+- **`--region`**: AWS region where the cluster will be created.
+- **`--nodegroup-name`**: Name of the managed node group.
+- **`--node-type`**: Instance type for the nodes (e.g., `t3.medium`).
+- **`--nodes`**: Number of desired nodes (initial size).
+- **`--nodes-min` / `--nodes-max`**: Auto-scaling configuration for the node group.
+- **`--managed`**: Uses managed node groups for easier management.
 
-# Push image to Docker Hub
-$ docker push <docker-hub-username>/flask-rps-app:latest
+---
+
+### 2. Configure `kubectl` to Connect to the Cluster
+
+After creating the cluster, update your `kubeconfig` file:
+
+```bash
+aws eks --region <your-region> update-kubeconfig --name flask-rps-cluster
 ```
 
-### 3. Deploy to Kubernetes
+Verify connection to the cluster:
 
-#### Apply Deployment Manifest
 ```bash
-$ kubectl apply -f deployment.yaml
+kubectl get nodes
 ```
 
-#### Apply Service Manifest
-```bash
-$ kubectl apply -f service.yaml
+---
+
+### 3. Deploy the Flask App
+
+#### Step 1: Apply the Deployment Manifest
+
+Save the following deployment manifest to `deployment.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-rps-deployment
+  labels:
+    app: flask-rps
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flask-rps
+  template:
+    metadata:
+      labels:
+        app: flask-rps
+    spec:
+      containers:
+      - name: flask-rps
+        image: ibraheemcisse/flask-rps-app:latest
+        ports:
+        - containerPort: 5000
 ```
+
+Apply it using:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+#### Step 2: Apply the Service Manifest
+
+Save the following service manifest to `service.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-rps-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: flask-rps
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 5000
+```
+
+Apply it using:
+
+```bash
+kubectl apply -f service.yaml
+```
+
+---
 
 ### 4. Access the Application
 
-Find the node's external IP and access the application via the `NodePort`.
+Once the `LoadBalancer` service is deployed, get its external IP:
+
 ```bash
-$ kubectl get nodes -o wide
-$ kubectl get svc
+kubectl get svc
 ```
 
-Access the app:
-- **App Endpoint**: `http://<node-ip>:30000`
+Access your app at `http://<external-ip>`.
 
 ---
-
-## Application Overview
-
-### Flask Application (`app.py`)
-- **Endpoints**:
-  - `/`: Returns `Hello, World!`
-
-### Dockerfile
-- Uses `python:3.9-slim` for a lightweight container.
-- Installs dependencies listed in `requirements.txt`.
-- Exposes port 80 and runs the Flask app.
-
-### Kubernetes Configuration
-- **Deployment (`deployment.yaml`)**:
-  - Single replica of the app.
-  - Resource requests and limits defined.
-  - Uses the Docker image built earlier.
-- **Service (`service.yaml`)**:
-  - NodePort service to expose the app on port `30000`.
-
----
-
-## Clean Up
-To delete the deployment and service:
-```bash
-$ kubectl delete -f deployment.yaml
-$ kubectl delete -f service.yaml
-```
 
 ---
 
