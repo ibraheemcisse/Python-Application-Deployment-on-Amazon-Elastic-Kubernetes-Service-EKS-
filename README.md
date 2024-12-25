@@ -1,16 +1,16 @@
 # Python Application Deployment on EKS
 
-This project demonstrates deploying a simple Python application on Amazon Elastic Kubernetes Service (EKS). The application is built using Flask, and is containerized using Docker. The Kubernetes deployment includes a service to expose the application.
+This project demonstrates deploying a simple Python application on Amazon Elastic Kubernetes Service (EKS). The application is built using Flask and is containerized using Docker. The Kubernetes deployment includes a service to expose the application.
 
 ## Features
-- A Flask-based Python app with Prometheus metrics.
+- A Flask-based Python app.
 - Dockerized application with a lightweight `python:3.9-slim` image.
 - Kubernetes deployment and service configurations.
 - Runs on EKS.
 
 ## Files
 
-- **`app.py`**: The Flask application with Prometheus metrics.
+- **`app.py`**: The Flask application.
 - **`Dockerfile`**: Instructions for building the Docker image.
 - **`requirements.txt`**: Python dependencies.
 - **`deployment.yaml`**: Kubernetes Deployment manifest.
@@ -69,7 +69,6 @@ $ kubectl get svc
 
 Access the app:
 - **App Endpoint**: `http://<node-ip>:30000`
-- **Prometheus Metrics**: `http://<node-ip>:30000/metrics`
 
 ---
 
@@ -104,6 +103,6 @@ $ kubectl delete -f service.yaml
 ---
 
 ## Future Enhancements
-- Add Horizontal Pod Autoscaler (HPA) for scaling based on metrics.
+- Add Horizontal Pod Autoscaler (HPA) for scaling.
 - Implement an Ingress resource for better traffic management.
 - Enhance security with NetworkPolicies and Secrets.
