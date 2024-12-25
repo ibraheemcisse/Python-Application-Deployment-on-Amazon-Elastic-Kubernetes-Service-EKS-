@@ -151,8 +151,6 @@ Access your app at `http://<external-ip>`.
 
 ---
 
----
-
 ## Future Enhancements
 - Add Horizontal Pod Autoscaler (HPA) for scaling.
 - Implement an Ingress resource for better traffic management.
