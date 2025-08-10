@@ -1,0 +1,446 @@
+# cluster-config.yaml - Enhanced EKS cluster configuration
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: flask-app-cluster
+  region: us-west-2
+  version: "1.27"
+  tags:
+    Environment: production
+    Project: flask-app
+    Owner: devops-team
+
+# VPC Configuration for better network control
+vpc:
+  enableDnsHostnames: true
+  enableDnsSupport: true
+  cidr: 10.0.0.0/16
+
+# IAM settings
+iam:
+  withOIDC: true
+  serviceAccounts:
+    - metadata:
+        name: aws-load-balancer-controller
+        namespace: kube-system
+      wellKnownPolicies:
+        awsLoadBalancerController: true
+
+# Managed Node Groups with auto-scaling
+managedNodeGroups:
+  - name: flask-app-nodes
+    instanceType: t3.medium
+    minSize: 2
+    maxSize: 6
+    desiredCapacity: 3
+    
+    # Volume configuration
+    volumeSize: 20
+    volumeType: gp3
+    
+    # Security and networking
+    privateNetworking: true
+    
+    # Labels and taints
+    labels:
+      role: worker
+      environment: production
+      
+    tags:
+      Name: flask-app-worker
+      Environment: production
+      
+    # Enable SSM for debugging
+    ssh:
+      enableSsm: true
+      
+    # Auto-scaling policies
+    asgMetricsCollection:
+      - granularity: "1Minute"
+        metrics:
+          - "GroupMinSize"
+          - "GroupMaxSize"
+          - "GroupDesiredCapacity"
+          - "GroupInServiceInstances"
+          - "GroupTotalInstances"
+
+# Add-ons
+addons:
+  - name: vpc-cni
+    version: latest
+  - name: coredns  
+    version: latest
+  - name: kube-proxy
+    version: latest
+  - name: aws-ebs-csi-driver
+    version: latest
+
+# CloudWatch logging
+cloudWatch:
+  clusterLogging:
+    enable: true
+    types: ["*"]
+    logRetentionInDays: 30
+
+---
+# k8s/namespace.yaml - Namespace with resource quotas
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flask-app
+  labels:
+    name: flask-app
+    environment: production
+    
+---
+# Resource quota for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: flask-app-quota
+  namespace: flask-app
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    count/pods: "10"
+    count/services: "5"
+
+---
+# k8s/deployment.yaml - Production-ready deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-app
+  namespace: flask-app
+  labels:
+    app: flask-app
+    version: v1.0.0
+    component: backend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: flask-app
+  template:
+    metadata:
+      labels:
+        app: flask-app
+        version: v1.0.0
+        component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Security context at pod level
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Service account (for future RBAC)
+      serviceAccountName: flask-app-sa
+      
+      containers:
+      - name: flask-app
+        image: ibraheemcisse/flask-rps-app:latest
+        imagePullPolicy: Always
+        
+        # Container ports
+        ports:
+        - name: http
+          containerPort: 5000
+          protocol: TCP
+        
+        # Environment variables
+        env:
+        - name: FLASK_ENV
+          value: "production"
+        - name: PORT
+          value: "5000"
+        - name: WORKERS
+          value: "4"
+        
+        # Resource management
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Startup probe for slow-starting applications
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        
+        # Security context at container level
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        # Volume mounts for writable directories
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: var-log
+          mountPath: /var/log
+      
+      # Volumes
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      - name: var-log
+        emptyDir: {}
+      
+      # Pod disruption settings
+      terminationGracePeriodSeconds: 30
+      
+      # Node selection (optional)
+      nodeSelector:
+        role: worker
+      
+      # Tolerations and affinity
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - flask-app
+              topologyKey: kubernetes.io/hostname
+
+---
+# k8s/service-account.yaml - Service account with minimal permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flask-app-sa
+  namespace: flask-app
+  labels:
+    app: flask-app
+automountServiceAccountToken: false
+
+---
+# k8s/service.yaml - Enhanced service configuration
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-service
+  namespace: flask-app
+  labels:
+    app: flask-app
+    component: backend
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: LoadBalancer
+  sessionAffinity: None
+  selector:
+    app: flask-app
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: http
+    
+---
+# k8s/hpa.yaml - Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flask-app-hpa
+  namespace: flask-app
+  labels:
+    app: flask-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flask-app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+# k8s/pod-disruption-budget.yaml - Ensure availability during updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: flask-app-pdb
+  namespace: flask-app
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: flask-app
+
+---
+# k8s/network-policy.yaml - Network security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flask-app-netpol
+  namespace: flask-app
+spec:
+  podSelector:
+    matchLabels:
+      app: flask-app
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 5000
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# k8s/configmap.yaml - Application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flask-app-config
+  namespace: flask-app
+  labels:
+    app: flask-app
+data:
+  FLASK_ENV: "production"
+  LOG_LEVEL: "INFO"
+  WORKERS: "4"
+  app.conf: |
+    # Flask application configuration
+    SECRET_KEY=your-secret-key-here
+    DEBUG=False
+    TESTING=False
+    
+---
+# k8s/ingress.yaml - Ingress with SSL termination (optional)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flask-app-ingress
+  namespace: flask-app
+  annotations:
+    kubernetes.io/ingress.class: "alb"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+spec:
+  rules:
+  - host: flask-app.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: flask-service
+            port:
+              number: 80
